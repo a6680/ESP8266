@@ -176,17 +176,16 @@ void checkWiFiConnect() {
     if (WiFi.status() == WL_CONNECTED) {
         Serial.println("已连接到WiFi！");
         if (wifiModeHasBeenSet) {
-           ESP.restart();
+           ESP.restart();  // WiFi正常后重启回到 WIFI_STA 模式
         }
     } else {
         Serial.println("WiFi连接中断！");
         if (!wifiModeHasBeenSet) { // 检查WiFi模式是否已经设置
-            // 设置WIFI_AP_STA，WiFi尝试连接
-            WiFi.mode(WIFI_AP_STA);
+            WiFi.mode(WIFI_AP_STA);  // 设置WIFI_AP_STA模式
             wifiModeHasBeenSet = true; // 设置WiFi模式标志
-            WiFi.begin(config.ssid.c_str(), config.password.c_str());
-            WiFi.softAP(config.APssid.c_str(), config.APpassword.c_str());
+            WiFi.softAP(config.APssid.c_str(), config.APpassword.c_str());  // 启动热点
         }
+      WiFi.begin(config.ssid.c_str(), config.password.c_str());   // 尝试连接WiFi
     }
 }
 
