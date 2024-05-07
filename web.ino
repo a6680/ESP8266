@@ -1,25 +1,29 @@
-void configweb() {
-  server.on("/", [config = readWiFiConfig()]() {
-    if (!server.authenticate(config.Webuser.c_str(), config.Webpass.c_str())) {
-      return server.requestAuthentication();
-    }
-    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>";
-    html += "<title>ESP8266 Web 服务器</title></head><body style='text-align: center; margin-top: 50px;'>";
-    html += "<h2 style='margin-bottom: 20px;'>ESP8266 Web 服务器</h2>";
-    html += "<p>欢迎使用</p>";
-    html += "<button onclick='toggleLED(this)'>切换LED</button><br><br>";
-    html += "<button onclick='openGate(this)'>开启大门</button><br><br>";
-    html += "<button onclick='restartDevice(this)'>重启设备</button><br><br>";
-    html += "<button onclick='location.href=\"/status\"'>查看设备状态</button>";
-    html += "<script>";
-    html += "function toggleLED(button) { button.disabled = true; fetch('/toggleLED').then(response => response.text()).then(data => { alert(data); button.disabled = false; }); setTimeout(() => { button.disabled = false; }, 1000); }";
-    html += "function openGate(button) { button.disabled = true; fetch('/openGate').then(response => response.text()).then(data => { alert(data); button.disabled = false; }); setTimeout(() => { button.disabled = false; }, 1000); }";
-    html += "function restartDevice(button) { button.disabled = true; fetch('/restartDevice').then(response => response.text()).then(data => { alert(data); button.disabled = false; }); setTimeout(() => { button.disabled = false; }, 1000); }";
-    html += "</script></body></html>";
-    server.send(200, "text/html", html);
-  });
+void handleRoot() {
+  BasicAuthentication();
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>";
+  html.concat("<title>ESP8266 Web 服务器</title></head><body style='text-align: center; margin-top: 50px;'>");
+  html.concat("<h2 style='margin-bottom: 20px;'>ESP8266 Web 服务器</h2>");
+  html.concat("<p>欢迎使用</p>");
+  html.concat("<button onclick='performAction(\"/toggleLED\", this)'>切换LED</button><br><br>");
+  html.concat("<button onclick='confirmAction(\"/openGate\", \"\", \"确定要开门吗？要不再想想？\", this)'>开启大门</button><br><br>");
+  html.concat("<button onclick='confirmAction(\"/restartDevice\", \"重启设备成功\", \"确定要重启设备吗？\", this)'>重启设备</button><br><br>");
+  html.concat("<button onclick='location.href=\"/status\"'>设备运行状态</button>");
+  html.concat("<script>");
+  html.concat("const urlParams = new URLSearchParams(window.location.search);"); // 获取 URL 参数
+  html.concat("const key = urlParams.get('key');");
+  html.concat("function showResult(result) { alert(result); }");
+  html.concat("function performAction(url, button) {");
+  html.concat("  button.disabled = true;");
+  html.concat("  fetch(`${url}?key=${key}`).then(response => response.text()).then(text => { showResult(text); button.disabled = false; }).catch(err => { showResult('操作失败'); button.disabled = false; });");
+  html.concat("}");
+  html.concat("function confirmAction(url, message, confirmation, button) {");
+  html.concat("  if (confirm(confirmation)) { performAction(`${url}?key=${key}`, button); }");
+  html.concat("}");
+  html.concat("</script></body></html>");
+  server.send(200, "text/html", html);
+}
 
-server.on("/toggleLED", []() {
+void toggleLED() {
     bool isOn = digitalRead(ledPin);
     digitalWrite(ledPin, !isOn);
     if (isOn) {
@@ -27,200 +31,283 @@ server.on("/toggleLED", []() {
     } else {
         server.send(200, "text/plain", "LED状态已关闭");
     }
-});
+}
 
-  server.on("/openGate", []() {
-    digitalWrite(gatePin, HIGH);
-    delay(300);
-    digitalWrite(gatePin, LOW);
-    server.send(200, "text/plain", "大门已开启");
-  });
+void openGate() {
+        BasicAuthentication();
+        digitalWrite(gatePin, HIGH);
+        server.send(200, "text/plain", "大门已开启！");
+        delay(300);
+        digitalWrite(gatePin, LOW);
+        sendPushPlusMessage("大门已开启！");
+}
 
-  server.on("/restartDevice", []() {
+
+void restartDevice() {
     server.send(200, "text/plain", "设备即将重启...");
+    sendPushPlusMessage("设备即将重启...");
     delay(1000);
     ESP.restart();
-  });
-  
+}
 
-  
-server.on("/config", HTTP_GET, [config = readWiFiConfig()]() {
-    if (!server.authenticate(config.Webuser.c_str(), config.Webpass.c_str())) {
-      return server.requestAuthentication();
+void handleStatus() {
+  // 设置响应头信息
+  server.sendHeader("Connection", "close");
+  server.sendHeader("Content-Type", "text/html; charset=utf-8");
+
+  // 定义HTML模板
+  const char* htmlTemplate = R"(
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>%s</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+        pre {
+          font-family: monospace;
+          white-space: pre-wrap;
+          font-size: 15px;  
+        }
+      </style>
+      <script>
+        function updateStatus() {
+          fetch('/script', {cache: 'no-cache'})
+            .then(response => response.text())
+            .then(data => document.getElementById('script').textContent = data)
+            .catch(error => console.error('Error:', error));
+        }
+        updateStatus();
+        setInterval(updateStatus, 1000);
+      </script>
+    </head>
+    <body>
+      <h1>%s</h1>
+      <pre id="script"></pre>
+    </body>
+    </html>
+  )";
+
+  // 定义HTML缓冲区，使用snprintf填充HTML模板
+  char html[2048];
+  snprintf(html, sizeof(html), htmlTemplate, "ESP8266 状态信息", "ESP8266 状态信息"); 
+
+  // 发送HTTP响应
+  server.send(200, "text/html", html); 
+}
+
+
+void handleScript() {
+  uint32_t freeHeap = ESP.getFreeHeap();
+  float heapFragmentation = ESP.getHeapFragmentation();
+  uint32_t totalFlash = ESP.getFlashChipSize();
+  uint32_t freeFlash = ESP.getFreeSketchSpace();
+  unsigned long uptime = millis();
+
+  unsigned long days = uptime / (1000 * 60 * 60 * 24);
+  unsigned long hours = (uptime % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60);
+  unsigned long minutes = (uptime % (1000 * 60 * 60)) / (1000 * 60);
+  unsigned long seconds = (uptime % (1000 * 60)) / 1000;
+
+  char responseBuffer[512];
+  snprintf(responseBuffer, sizeof(responseBuffer),
+           "可用堆内存: %u KB\n"
+           "堆内存碎片化: %.2f%%\n"
+           "总闪存: %.2f MB\n"
+           "可用闪存: %.2f MB\n"
+           "运行时间: %lu 天 %lu 小时 %lu 分钟 %lu 秒",
+           freeHeap / 1024, heapFragmentation,
+           totalFlash / (1024.0 * 1024), freeFlash / (1024.0 * 1024),
+           days, hours, minutes, seconds);
+
+  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server.sendHeader("Pragma", "no-cache");
+  server.sendHeader("Expires", "0"); 
+  server.send(200, "text/plain", responseBuffer); 
+}
+
+
+void handleConfig() {
+    if (!server.authenticate(username.c_str(), userpassword.c_str())) {
+    server.requestAuthentication();
+    return;
     }
-    // 构建HTML页面
-    String page = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>";
-    page += "<style>";
-    page += "body {font-family: Arial, sans-serif;}";
-    // 按钮样式 margin-top 上边距 margin-right 右边距
-    page += ".btn { margin-top: 15px; margin-right: 10px; }";
-    page += "</style>";
-    // JavaScript函数用于切换密码可见性
-    page += "<script>function togglePasswordVisibility() {";
-    page += "var passwords = document.querySelectorAll('input[type=password]');";
-    page += "passwords.forEach(function(password) {";
-    page += "if (password.type === 'password') {password.type = 'text';} else {password.type = 'password';}});}";
-    // JavaScript函数用于发送重启请求
-    page += "function restartDevice() {";
-    page += "if (confirm('确定要重启设备吗？')) {";
-    page += "var xhr = new XMLHttpRequest();";
-    page += "xhr.open('GET', '/restartDevice', true);";
-    page += "xhr.send();";
-    page += "alert('设备即将重启...');";
-    page += "}}";
-    page += "</script></head><body>";
-    // 检查是否存在配置文件
-    page += "<h2>配置文件</h2>";
-    if (LittleFS.exists("/config.json")) {
-        page += "<p>状态：已找到配置文件。</p>";
-        page += "<p>当前IP：" + WiFi.localIP().toString() + "</p>";
-    } else {
-        page += "<p>状态：未找到配置文件。</p>";
-    }
-    // WiFi配置部分
-    page += "<h2>WiFi配置</h2>";
-    page += "<form method='post'>";
-    page += "<label style='display: inline-block; width: 100px;'>WiFi SSID:</label><input style='width: calc(100% - 120px);' name='ssid' placeholder='WiFi SSID' value='";
-    page += config.ssid.c_str();
-    page += "' required><br>"; // 添加 required 属性以防止空SSID
-    page += "<label style='display: inline-block; width: 100px;'>WiFi密码:</label><input style='width: calc(100% - 120px);' name='password' placeholder='WiFi密码' type='password' pattern='.{8,}' title='密码长度至少8个字符' required value='";
-    page += config.password.c_str();
-    page += "'><br>"; // 添加 required 和 pattern 属性以确保密码至少8个字符
-    // AP热点配置部分
-    page += "<h2>AP热点配置</h2>";
-    page += "<label style='display: inline-block; width: 100px;'>AP SSID:</label><input style='width: calc(100% - 120px);' name='ap_ssid' placeholder='AP SSID' value='";
-    page += config.APssid.c_str();
-    page += "' required><br>"; // 添加 required 属性以防止空SSID
-    page += "<label style='display: inline-block; width: 100px;'>AP密码:</label><input style='width: calc(100% - 120px);' name='ap_password' placeholder='AP密码' type='password' pattern='.{8,}' title='密码长度至少8个字符' required value='";
-    page += config.APpassword.c_str();
-    page += "'><br>"; // 添加 required 和 pattern 属性以确保密码至少8个字符
-    // 管理账号配置部分
-    page += "<h2>管理账号配置</h2>";
-    page += "<label style='display: inline-block; width: 100px;'>Web用户名:</label><input style='width: calc(100% - 120px);' name='www_username' placeholder='Web用户名' required value='";
-    page += config.Webuser.c_str();
-    page += "'><br>"; // 添加 required 属性以防止空用户名
-    page += "<label style='display: inline-block; width: 100px;'>Web密码:</label><input style='width: calc(100% - 120px);' name='www_password' placeholder='Web密码' type='password' required value='";
-    page += config.Webpass.c_str();
-    page += "'><br>"; // 添加 required 属性以防止空密码
-    // 按钮容器
-    page += "<div class='btn-container'>";
-    page += "<button type='submit' class='btn'>保存</button>";
-    page += "<button type='button' onclick='restartDevice()' class='btn'>重启</button>";
-    page += "<button type='button' onclick='confirmDelete()' class='btn'>删除配置</button>";
-    page += "<button type='button' onclick='togglePasswordVisibility()' class='btn'>显示/隐藏密码</button>";
-    page += "</div>";
-    page += "<script>function confirmDelete() {";
-    page += "if (confirm('确定要删除配置吗？')) {";
-    page += "var xhr = new XMLHttpRequest();";
-    page += "xhr.onreadystatechange = function() {";
-    page += "if (xhr.readyState == 4 && xhr.status == 200) {";
-    page += "alert(xhr.responseText);"; // 显示返回结果
-    page += "location.reload();"; // 刷新页面
-    page += "}";
-    page += "};";
-    page += "xhr.open('GET', '/delete', true);";
-    page += "xhr.send();";
-    page += "}}";
-    page += "</script>";
-    page += "<script>function confirmDelete() {";
-    page += "if (confirm('确定要删除配置吗？')) {";
-    page += "var xhr = new XMLHttpRequest();";
-    page += "xhr.onreadystatechange = function() {";
-    page += "if (xhr.readyState == 4 && xhr.status == 200) {";
-    page += "alert(xhr.responseText);"; // 显示返回结果
-    page += "location.reload();"; // 刷新页面
-    page += "}";
-    page += "};";
-    page += "xhr.open('GET', '/delete', true);";
-    page += "xhr.send();";
-    page += "}}";
-    page += "</script>";
-    page += "</form></body></html>";
-    // 发送网页
-    server.send(200, "text/html", page);
-});
+    // 生成包含已保存的SSID和密码的表单
+    String html = "<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
+    html += "<style>#container { text-align: center; }</style>";
+    html += "<div id='container'>"; // 包裹内容的 div
+    html += "<h3>WiFi配置</h3>";
 
-  // 更新配置
-  server.on("/config", HTTP_POST, []() {
-    DynamicJsonDocument doc(1024);
-    doc["wifi"]["ssid"] = server.arg("ssid");
-    doc["wifi"]["password"] = server.arg("password");
+    html += "<form id='configForm' onsubmit='saveConfig(event)' action='/save' method='post'>";
+    html += "<div style='display: flex; justify-content: center; align-items: center; flex-direction: column;'>"; // 使用flex布局来居中显示
+    html += "<div style='margin-bottom: 10px;'>"; // 设置上下间距
+    html += "<label for='ssid' style='width: 150px;'>WiFi名称: </label>"; // 设置固定宽度
+    html += "<input type='text' id='ssid' name='ssid' value='" + String(ssid) + "' required>";
+    html += "</div>";
+    html += "<div style='margin-bottom: 10px;'>";
+    html += "<label for='password' style='width: 150px;'>WiFi密码: </label>";
+    html += "<input type='password' id='password' name='password' minlength='8' value='" + String(password) + "' required>";
+    html += "</div>";
+    
+    html += "<h3>AP配置</h3>";
+    html += "<div style='margin-bottom: 10px;'>";
+    html += "<label for='ap_ssid' style='width: 150px;'>AP名称: </label>";
+    html += "<input type='text' id='ap_ssid' name='ap_ssid' value='" + String(ap_ssid) + "' required>";
+    html += "</div>";
+    html += "<div style='margin-bottom: 10px;'>";
+    html += "<label for='ap_password' style='width: 150px;'>AP密码: </label>";
+    html += "<input type='password' id='ap_password' name='ap_password' minlength='8' value='" + String(ap_password) + "' required>";
+    html += "</div>";
 
-    doc["ap"]["ssid"] = server.arg("ap_ssid");
-    doc["ap"]["password"] = server.arg("ap_password");
+    html += "<h3>管理账号配置</h3>";
+    html += "<div style='margin-bottom: 10px;'>";
+    html += "<label for='username' style='width: 150px;'>用户名: </label>";
+    html += "<input type='text' id='username' name='username' value='" + String(username) + "' required>";
+    html += "</div>";
+    html += "<div style='margin-bottom: 10px;'>";
+    html += "<label for='userpassword' style='margin-left: 17px;'>密码: </label>";
+    html += "<input type='password' id='userpassword' name='userpassword' minlength='5' value='" + String(userpassword) + "' required>";
+    html += "</div>";
+    html += "<div style='margin-top: 10px;'>"; // 上边距
+    html += "<button type='submit' style='margin-right: 10px;'>保存</button>";
+    html += "<button type='button' style='margin-right: 10px;' onclick='readConfig()'>读取</button>";
+    html += "<button type='button' style='margin-right: 10px;' onclick='deleteConfig()'>删除</button>";
+    html += "<button type='button' style='margin-right: 10px;' onclick='togglePasswordVisibility()'>显示密码</button>";
+    html += "</div>"; // 关闭包含按钮的 div
+    html += "</form>"; // 关闭表单
+    html += "<div id='output'></div>"; // 输出结果的 div
+    
+    // JavaScript 部分
+    html += "<script>";
+    html += "function readConfig() {";
+    html += "  fetch('/read')";
+    html += "    .then(response => response.text())";
+    html += "    .then(data => {";
+    html += "      document.getElementById('output').innerHTML = data;";
+    html += "    })";
+    html += "    .catch(error => console.error('读取配置错误:', error));"; // 添加错误处理
+    html += "}";
 
-    doc["web"]["username"] = server.arg("www_username");
-    doc["web"]["password"] = server.arg("www_password");
+    html += "function saveConfig(event) {";
+    html += "  event.preventDefault();"; // 阻止表单默认提交行为
+    html += "  var ssid = document.getElementById('ssid').value.trim();";
+    html += "  var password = document.getElementById('password').value.trim();";
+    html += "  var username = document.getElementById('username').value.trim();"; // 获取用户名输入框的值
+    html += "  var userpassword = document.getElementById('userpassword').value.trim();"; // 获取用户密码输入框的值
+    html += "  if(ssid === '' || password.length < 8 || username === '' || password.length < 5) {"; // 检查用户名和用户密码是否为空以及长度
+    html += "    return;";
+    html += "  }";
+    html += "  if(!confirm('确定要保存配置吗？')) return;"; // 提示是否确定保存
+    html += "  fetch('/save', {";
+    html += "    method: 'POST',";
+    html += "    body: new FormData(document.getElementById('configForm'))";
+    html += "  })";
+    html += "    .then(response => response.text())";
+    html += "    .then(data => {";
+    html += "      alert(data);"; // 弹出保存结果
+    html += "    })";
+    html += "    .catch(error => console.error('保存配置错误:', error));"; // 添加错误处理
+    html += "}";
 
-    File configFile = LittleFS.open("/config.json", "w");
-    if (!configFile) {
-      server.send(500, "text/plain", "打开配置文件写入失败");
-      return;
-    }
-    serializeJson(doc, configFile);
-    configFile.close();   
-    // 构建弹出提示框的 JavaScript 代码
-    String response = "<html><head><title>保存成功</title>";
-    response += "<script>";
-    response += "alert('保存成功！请重启应用。');"; // 弹出保存成功提示框
-    response += "window.location='/config';"; // 重定向到配置
-    response += "</script></head><body>";
-    response += "</body></html>";
-    // 发送 HTML 响应，弹出保存成功提示框
-    server.send(200, "text/html; charset=utf-8", response);
-});
+    html += "function deleteConfig() {";
+    html += "  if(!confirm('确定要删除配置吗？')) return;"; // 确认删除
+    html += "  fetch('/delete', {";
+    html += "    method: 'POST',";
+    html += "    body: new FormData(document.getElementById('configForm'))";
+    html += "  })";
+    html += "    .then(response => response.text())";
+    html += "    .then(data => {";
+    html += "      alert(data);"; // 弹出删除结果
+    html += "    })";
+    html += "    .catch(error => console.error('删除配置错误:', error));"; // 添加错误处理
+    html += "}";
 
-  server.on("/delete", HTTP_GET, []() {
-    LittleFS.remove("/config.json");
-    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    server.sendHeader("Pragma", "no-cache");
-    server.sendHeader("Expires", "-1");
-    server.send(200, "text/plain", "配置已删除，重启设备以应用默认设置。");
-  });
-  server.begin();
-  Serial.println("HTTP服务器已启动");
-
-
-server.on("/status", HTTP_GET, []() {
-    // 获取状态信息
-    uint32_t freeHeap = ESP.getFreeHeap();
-    float heapFragmentation = ESP.getHeapFragmentation();
-    uint32_t totalFlash = ESP.getFlashChipSize();
-    uint32_t freeFlash = ESP.getFreeSketchSpace();
-    unsigned long uptime = millis();
-
-    // 转换为易读单位
-    float freeHeapKB = freeHeap / 1024.0;
-    float totalFlashMB = totalFlash / (1024.0 * 1024.0);
-    float freeFlashKB = freeFlash / 1024.0;
-    unsigned long uptimeSeconds = uptime / 1000;
-
-    // 计算运行时间的天、小时、分钟和秒
-    uint32_t days = uptimeSeconds / (60 * 60 * 24);
-    uptimeSeconds %= (60 * 60 * 24);
-    uint32_t hours = uptimeSeconds / (60 * 60);
-    uptimeSeconds %= (60 * 60);
-    uint32_t minutes = uptimeSeconds / 60;
-    uint32_t seconds = uptimeSeconds % 60;
-
-    // 构建运行时间字符串
-    String uptimeString = String(days) + " 天 ";
-    uptimeString += String(hours) + " 小时 ";
-    uptimeString += String(minutes) + " 分钟 ";
-    uptimeString += String(seconds) + " 秒";
-
-    String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'><title>ESP8266 状态</title></head><body>";
-    // 使用表格格式化输出
-    html += "<table>";
-    html += "<tr><th>项目</th><th>值</th></tr>";
-    html += "<tr><td>剩余堆内存</td><td>" + String(freeHeapKB) + " KB</td></tr>";
-    html += "<tr><td>堆内存碎片化程度</td><td>" + String(heapFragmentation) + "</td></tr>";
-    html += "<tr><td>总存储容量</td><td>" + String(totalFlashMB) + " MB</td></tr>";
-    html += "<tr><td>剩余存储容量</td><td>" + String(freeFlashKB) + " KB</td></tr>";
-    html += "<tr><td>运行时间</td><td>" + uptimeString + "</td></tr>";
-    html += "</table>";
-    html += "</body></html>";
+    html += "function togglePasswordVisibility() {";
+    html += "  var passwordInput = document.getElementById('password');";
+    html += "  var apPasswordInput = document.getElementById('ap_password');"; // 获取 AP 密码输入框元素
+    html += "  var userasswordInput = document.getElementById('userpassword');"; // 获取 用户 密码输入框元素
+    html += "  passwordInput.type = (passwordInput.type === 'password') ? 'text' : 'password';"; // 切换密码显示状态
+    html += "  apPasswordInput.type = (apPasswordInput.type === 'password') ? 'text' : 'password';"; // 切换 AP 密码显示状态
+    html += "  userasswordInput.type = (userasswordInput.type === 'password') ? 'text' : 'password';"; // 切换 用户 密码显示状态
+    html += "}";
+    html += "</script>";
+    html += "</div>"; // 关闭包含所有内容的 div
+    // 发送 HTML 响应
     server.send(200, "text/html", html);
-});
+}
 
+
+
+void handleRead() {
+    // 读取配置文件
+    File configFile = LittleFS.open("/config.json", "r");
+    if (!configFile) {
+        server.send(500, "text/plain", "无法打开配置文件进行读取");
+        return;
+    }
+
+    // 读取配置文件内容
+    String configContent;
+    while (configFile.available()) {
+        configContent += configFile.readString();
+    }
+
+    // 关闭文件
+    configFile.close();
+
+    // 将配置内容发送回客户端
+    server.send(200, "text/plain", configContent);
+
+    // 释放内存
+    configContent = ""; // 清空字符串
+}
+
+
+void handleSave() {
+  // 从POST请求中获取SSID和密码
+  String ssid = server.arg("ssid");
+  String password = server.arg("password");
+  String ap_ssid = server.arg("ap_ssid");
+  String ap_password = server.arg("ap_password");
+  String username = server.arg("username");
+  String userpassword = server.arg("userpassword");
+
+
+  // 创建一个JSON文档并将SSID和密码写入其中
+  DynamicJsonDocument doc(200);
+  doc["WiFi"]["ssid"] = ssid;
+  doc["WiFi"]["password"] = password;
+  doc["AP"]["ssid"] = ap_ssid;
+  doc["AP"]["password"] = ap_password;
+  doc["Web"]["user"] = username;
+  doc["Web"]["password"] = userpassword;
+  // 打开配置文件并写入JSON数据
+  File configFile = LittleFS.open("/config.json", "w");
+  if (!configFile) {
+    Serial.println("无法打开配置文件进行写入");
+    return;
+  }
+  serializeJson(doc, configFile);
+  configFile.close();
+
+  // 释放JSON文档使用的内存
+  doc.clear();
+  // 释放文件资源
+  configFile.close();
+  
+  // 发送响应，表示配置已保存
+  server.send(200, "text/plain", "配置已保存，正在重启");
+  delay(500); // 等待500毫秒
+  ESP.restart();
+}
+
+void deleteConfig() {
+  // 尝试删除配置文件
+  if (LittleFS.remove("/config.json")) {
+    server.send(200, "text/plain", "配置文件删除成功,，正在重启");
+    delay(500); // 等待500毫秒
+    ESP.restart();
+  } else {
+    server.send(200, "text/plain", "无法删除配置文件");
+
+  }
 }
