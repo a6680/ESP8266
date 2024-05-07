@@ -19,7 +19,7 @@ const char* defaultAPpassword = "85585315";
 const char* defaultusername = "admin";
 const char* defaultpassword = "esp8266";
 
-const char* pushplusToken = "0e1e35e102694f8ea708b143096c849c";
+const char* pushplusToken = "pushplus_token";
 
 const int ledPin = 2; // LED连接到GPIO2
 const int gatePin = 5; // 大门连接到GPIO5 (D1)
@@ -136,12 +136,13 @@ void BasicAuthentication() {
     }
 }
 
-// pushplus消息推送
 void sendPushPlusMessage(String message) {
   String url = "http://www.pushplus.plus/send";  // PushPlus消息推送API接口地址
   String body = "token=" + String(pushplusToken) + "&title=ESP8266&content=" + message;  // POST请求的消息体
 
-  http.begin(url);  // 开始HTTP请求
+  WiFiClient client;  // 创建WiFiClient实例
+
+  http.begin(client, url);  // 开始HTTP请求
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");  // 添加请求头
 
   int httpCode = http.POST(body);  // 发送POST请求
@@ -156,7 +157,6 @@ void sendPushPlusMessage(String message) {
 
   http.end();  // 结束HTTP请求，释放资源
 }
-
 
     
     
