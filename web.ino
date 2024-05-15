@@ -1,5 +1,5 @@
 void handleRoot() {
-  BasicAuthentication();
+  authenticationMode();
   String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>";
   html.concat("<title>ESP8266 Web 服务器</title></head><body style='text-align: center; margin-top: 50px;'>");
   html.concat("<h2 style='margin-bottom: 20px;'>ESP8266 Web 服务器</h2>");
@@ -7,6 +7,7 @@ void handleRoot() {
   html.concat("<button onclick='performAction(\"/toggleLED\", this)'>切换LED</button><br><br>");
   html.concat("<button onclick='confirmAction(\"/openGate\", \"\", \"确定要开门吗？要不再想想？\", this)'>开启大门</button><br><br>");
   html.concat("<button onclick='confirmAction(\"/restartDevice\", \"重启设备成功\", \"确定要重启设备吗？\", this)'>重启设备</button><br><br>");
+  html.concat("<button onclick='confirmAction(\"/handleEnable\", \"\", \"确定要启动更新吗？\", this)'>启动固件更新</button><br><br>");
   html.concat("<button onclick='location.href=\"/status\"'>设备运行状态</button>");
   html.concat("<script>");
   html.concat("const urlParams = new URLSearchParams(window.location.search);"); // 获取 URL 参数
@@ -24,6 +25,7 @@ void handleRoot() {
 }
 
 void toggleLED() {
+    authenticationMode();
     bool isOn = digitalRead(ledPin);
     digitalWrite(ledPin, !isOn);
     if (isOn) {
@@ -34,7 +36,7 @@ void toggleLED() {
 }
 
 void openGate() {
-        BasicAuthentication();
+        authenticationMode();
         digitalWrite(gatePin, HIGH);
         server.send(200, "text/plain", "大门已开启！");
         delay(300);
@@ -45,7 +47,6 @@ void openGate() {
 
 void restartDevice() {
     server.send(200, "text/plain", "设备即将重启...");
-    sendPushPlusMessage("设备即将重启...");
     delay(1000);
     ESP.restart();
 }
@@ -167,7 +168,28 @@ void handleConfig() {
     html += "<label for='userpassword' style='margin-left: 17px;'>密码: </label>";
     html += "<input type='password' id='userpassword' name='userpassword' minlength='5' value='" + String(userpassword) + "' required>";
     html += "</div>";
-    html += "<div style='margin-top: 10px;'>"; // 上边距
+    
+    html += "<h3>KEY密钥</h3>";
+    html += "<div style='margin-bottom: 10px;'>";
+    html += "<label for='key' style='margin-left: 17px;'>密钥: </label>";
+    html += "<input type='password' id='key' name='key' minlength='5' value='" + String(key) + "' required>";
+    html += "</div>";
+    html += "";
+    html += "<style>.radio-group {display: flex;}.radio-group label {margin-right: 10px;}</style>";
+    html += "<h3>认证模式</h3>";
+    html += "<div class='radio-group'>";
+    html += "<label for='option1'><input type='radio' id='option1' name='options' value='KEY'";
+    if (authMode == "KEY") {
+      html += " checked";
+    }
+    html += "> KEY密钥</label>";
+    html += "<label for='option2'><input type='radio' id='option2' name='options' value='USER'";
+    if (authMode == "USER") {
+      html += " checked";
+    }
+    html += "> 管理账号</label>";
+    html += "</div>";
+    html += "<div style='margin-top: 15px;'>"; // 上边距
     html += "<button type='submit' style='margin-right: 10px;'>保存</button>";
     html += "<button type='button' style='margin-right: 10px;' onclick='readConfig()'>读取</button>";
     html += "<button type='button' style='margin-right: 10px;' onclick='deleteConfig()'>删除</button>";
@@ -225,9 +247,12 @@ void handleConfig() {
     html += "  var passwordInput = document.getElementById('password');";
     html += "  var apPasswordInput = document.getElementById('ap_password');"; // 获取 AP 密码输入框元素
     html += "  var userasswordInput = document.getElementById('userpassword');"; // 获取 用户 密码输入框元素
+    html += "  var keyInput = document.getElementById('key');"; // 获取 key 密码输入框元素
+
     html += "  passwordInput.type = (passwordInput.type === 'password') ? 'text' : 'password';"; // 切换密码显示状态
     html += "  apPasswordInput.type = (apPasswordInput.type === 'password') ? 'text' : 'password';"; // 切换 AP 密码显示状态
     html += "  userasswordInput.type = (userasswordInput.type === 'password') ? 'text' : 'password';"; // 切换 用户 密码显示状态
+    html += "  keyInput.type = (keyInput.type === 'password') ? 'text' : 'password';"; // 切换 key 密码显示状态
     html += "}";
     html += "</script>";
     html += "</div>"; // 关闭包含所有内容的 div
@@ -270,6 +295,8 @@ void handleSave() {
   String ap_password = server.arg("ap_password");
   String username = server.arg("username");
   String userpassword = server.arg("userpassword");
+  String key = server.arg("key");
+  String authMode = server.arg("options"); // 获取认证模式选项值
 
 
   // 创建一个JSON文档并将SSID和密码写入其中
@@ -280,6 +307,12 @@ void handleSave() {
   doc["AP"]["password"] = ap_password;
   doc["Web"]["user"] = username;
   doc["Web"]["password"] = userpassword;
+  doc["url"]["key"] = key;
+  doc["authMode"] = authMode; // 将认证模式写入JSON文档
+
+
+
+  
   // 打开配置文件并写入JSON数据
   File configFile = LittleFS.open("/config.json", "w");
   if (!configFile) {
@@ -309,5 +342,15 @@ void deleteConfig() {
   } else {
     server.send(200, "text/plain", "无法删除配置文件");
 
+  }
+}
+
+void handleEnable() {
+  if (!otaEnabled) {
+    otaEnabled = true;
+    ArduinoOTA.begin();
+    server.send(200, "text/plain", "OTA 更新已启用，要关闭请重启");
+  } else {
+    server.send(200, "text/plain", "OTA 更新已经启用了，要关闭请重启");
   }
 }

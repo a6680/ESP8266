@@ -6,9 +6,13 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 
+
+
 HTTPClient http;
 
 ESP8266WebServer server(80);
+
+bool otaEnabled = false;
 
 const char* defaultSSID = "一楼";
 const char* defaultPassword = "85585315";
@@ -18,6 +22,10 @@ const char* defaultAPpassword = "85585315";
 
 const char* defaultusername = "admin";
 const char* defaultpassword = "esp8266";
+
+const char* defaultkey = "12345678";
+
+const char* defaultauthMode = "USER";
 
 const char* pushplusToken = "pushplus_token";
 
@@ -34,6 +42,8 @@ String ap_password = defaultAPpassword;
 String username = defaultusername;
 String userpassword = defaultpassword;
 
+String key = defaultkey;
+String authMode = defaultauthMode; // 声明authMode变量
 
 void setup() {
   Serial.begin(115200);
@@ -49,6 +59,7 @@ void setup() {
   server.on("/toggleLED", HTTP_GET, toggleLED);
   server.on("/openGate", HTTP_GET, openGate);
   server.on("/restartDevice", HTTP_GET, restartDevice);
+  server.on("/handleEnable", HTTP_GET, handleEnable);
   
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/script", HTTP_GET, handleScript);
@@ -62,7 +73,10 @@ void setup() {
 
 void loop() {
   server.handleClient();
-  ArduinoOTA.handle();
+  
+  if (otaEnabled) {
+    ArduinoOTA.handle();
+  }
 }
 
 // 读取配置
@@ -89,6 +103,8 @@ void readConfigFile() {
   ap_password = doc["AP"]["password"].as<String>();
   username = doc["Web"]["user"].as<String>();
   userpassword = doc["Web"]["password"].as<String>();
+  key = doc["url"]["key"].as<String>();
+  authMode = doc["authMode"].as<String>();
   doc.clear();
   configFile.close();
 }
@@ -110,7 +126,7 @@ void connectToWiFi() {
     Serial.println(WiFi.localIP());
   } else {
     Serial.println("\nWiFi连接失败!");
-   // startAPMode();
+    startAPMode();
   }
 }
 
@@ -128,13 +144,6 @@ void startAPMode() {
   }
 }
 
-
-// 身份认证
-void BasicAuthentication() {
-   if (!server.authenticate(username.c_str(), userpassword.c_str())) {
-      return server.requestAuthentication();
-    }
-}
 
 void sendPushPlusMessage(String message) {
   String url = "http://www.pushplus.plus/send";  // PushPlus消息推送API接口地址
@@ -158,6 +167,27 @@ void sendPushPlusMessage(String message) {
   http.end();  // 结束HTTP请求，释放资源
 }
 
+
+void authenticationMode() {
+    if (authMode == "USER") {
+        BasicAuthentication();
+    } else if (authMode == "KEY") {
+        Keyauthentication();
+    }
+}
+
     
-    
-    
+void Keyauthentication() {
+  if (!(server.hasArg("key") && server.arg("key") == key)) {
+        server.sendHeader("Content-Type", "text/html; charset=utf-8");
+        server.send(403, "text/html", "<h1>访问被拒绝！</h1>");
+  }
+}
+
+
+// 身份认证
+void BasicAuthentication() {
+   if (!server.authenticate(username.c_str(), userpassword.c_str())) {
+      return server.requestAuthentication();
+    }
+}
